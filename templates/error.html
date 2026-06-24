@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}{{ error.title }} — Help Me Diagnost{% endblock %}
+
+{% block page_header %}
+{% set page_title = error.title %}
+{% set page_description = "Review the details below and try again." %}
+{% include "partials/page_header.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card error-card">
+  <div class="card__body">
+    <div class="error-panel" role="alert">
+      <div class="error-panel__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+
+      <div class="error-panel__content">
+        <p class="error-panel__message">{{ error.message }}</p>
+
+        {% if error.hint %}
+        <p class="error-panel__hint">{{ error.hint }}</p>
+        {% endif %}
+
+        {% if code and code != 'unknown' %}
+        <p class="error-panel__code">Error code: <code>{{ code }}</code></p>
+        {% endif %}
+
+        <div class="error-panel__actions">
+          <a href="{{ url_for(error.back_endpoint) }}" class="btn btn--primary">
+            {{ error.back_label }}
+          </a>
+          <a href="{{ url_for('index') }}" class="btn btn--secondary">Go to home</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

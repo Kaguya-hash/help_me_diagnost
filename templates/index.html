@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Home — Help Me Diagnost{% endblock %}
+
+{% block page_header %}
+{% set page_title = "Available models" %}
+{% set page_description = "Browse trained classifiers and run predictions on new gene expression samples." %}
+{% include "partials/page_header.html" %}
+{% endblock %}
+
+{% block content %}
+<section class="action-cards" aria-label="Quick actions">
+  <a href="{{ url_for('test_page') }}" class="action-card">
+    <span class="action-card__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+    </span>
+    <h2 class="action-card__title">Run a test</h2>
+    <p class="action-card__text">Upload a CSV with gene expression and get class probabilities.</p>
+  </a>
+
+  <a href="{{ url_for('model_page') }}" class="action-card">
+    <span class="action-card__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+      </svg>
+    </span>
+    <h2 class="action-card__title">Register a model</h2>
+    <p class="action-card__text">Train from an RData file and store coefficients in the database.</p>
+  </a>
+</section>
+
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">Registered comparisons</h2>
+    <p class="card__subtitle">{{ rows|length }} model{{ 's' if rows|length != 1 else '' }} available</p>
+  </div>
+
+  {% if rows %}
+  <div class="card__body card__body--flush">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Class A</th>
+          <th scope="col">Class B</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><span class="data-table__model">{{ row.model_name }}</span></td>
+          <td>{{ row.class_a }}</td>
+          <td>{{ row.class_b }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card__body">
+    <div class="empty-state">
+      <div class="empty-state__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        </svg>
+      </div>
+      <h3 class="empty-state__title">No models yet</h3>
+      <p class="empty-state__text">Register your first classifier on the Model page to start running diagnostic tests.</p>
+      <a href="{{ url_for('model_page') }}" class="btn btn--primary">Register a model</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

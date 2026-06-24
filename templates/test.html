@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Test — Help Me Diagnost{% endblock %}
+
+{% block page_header %}
+{% set page_title = "Run diagnostic test" %}
+{% set page_description = "Select a trained model and upload a CSV file with Gene and Expression columns to compute class probabilities." %}
+{% include "partials/page_header.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="content-grid content-grid--2">
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Upload sample</h2>
+      <p class="card__subtitle">CSV must include Gene and Expression columns</p>
+    </div>
+    <div class="card__body">
+      <form action="{{ url_for('test_page') }}" method="post" enctype="multipart/form-data" class="form-stack">
+        <div class="form-field">
+          <label class="form-field__label" for="comparison">Model comparison</label>
+          <p class="form-field__hint">Choose which classifier to apply to your sample.</p>
+          <select name="comparison_id" id="comparison" class="form-select" required>
+            {% if rows %}
+              {% for row in rows %}
+              <option value="{{ row.comparison_id }}">
+                {{ row.name_1 }} vs {{ row.name_2 }} ({{ row.model_name }})
+              </option>
+              {% endfor %}
+            {% else %}
+              <option value="" disabled selected>No models available</option>
+            {% endif %}
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label class="form-field__label" for="csv_file">Expression data</label>
+          <div class="file-upload" data-file-upload>
+            <input type="file" name="csv_file" id="csv_file" class="file-upload__input" accept=".csv" required>
+            <label for="csv_file" class="file-upload__label">
+              <span class="file-upload__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </span>
+              <span class="file-upload__text">Choose CSV file</span>
+              <span class="file-upload__hint">or drag and drop here</span>
+              <span class="file-upload__name" data-file-name data-default-text=""></span>
+            </label>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn--primary btn--block"{% if not rows %} disabled{% endif %}>
+          Run prediction
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" id="test-results">
+    <div class="card__header">
+      <div class="card__header-row">
+        <div>
+          <h2 class="card__title">Results</h2>
+          <p class="card__subtitle">Predicted class probabilities from the logistic model</p>
+        </div>
+        {% if missing_genes and disease1_name and percentage_d1 is not none %}
+        <span class="badge badge--warning">Incomplete sample</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card__body">
+      {% if disease1_name and disease2_name and percentage_d1 is not none and percentage_d2 is not none %}
+      <div class="results-summary">
+        {% if missing_genes %}
+        {% include "partials/missing_genes_alert.html" %}
+        {% endif %}
+
+        {% if filename %}
+        <div class="results-file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          {{ filename }}
+        </div>
+        {% endif %}
+
+        <div class="probability-bars">
+          <div class="probability-bar">
+            <div class="probability-bar__header">
+              <span class="probability-bar__label">{{ disease1_name }}</span>
+              <span class="probability-bar__value">{{ "%.1f"|format(percentage_d1) }}%</span>
+            </div>
+            <div class="probability-bar__track">
+              <div class="probability-bar__fill probability-bar__fill--a" style="width: {{ percentage_d1 }}%"></div>
+            </div>
+          </div>
+
+          <div class="probability-bar">
+            <div class="probability-bar__header">
+              <span class="probability-bar__label">{{ disease2_name }}</span>
+              <span class="probability-bar__value">{{ "%.1f"|format(percentage_d2) }}%</span>
+            </div>
+            <div class="probability-bar__track">
+              <div class="probability-bar__fill probability-bar__fill--b" style="width: {{ percentage_d2 }}%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-state__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+        </div>
+        <h3 class="empty-state__title">No results yet</h3>
+        <p class="empty-state__text">Submit a CSV file to see predicted probabilities for each disease class.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if missing_genes %}
+<script>
+  document.getElementById("test-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+</script>
+{% endif %}
+{% endblock %}

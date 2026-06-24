@@ -1,0 +1,82 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Model — Help Me Diagnost{% endblock %}
+
+{% block page_header %}
+{% set page_title = "Register a model" %}
+{% set page_description = "Upload a trained RData object and define the two disease classes to store coefficients in the database." %}
+{% include "partials/page_header.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="content-grid content-grid--2">
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Model details</h2>
+      <p class="card__subtitle">All fields are required</p>
+    </div>
+    <div class="card__body">
+      <form action="{{ url_for('model_page') }}" method="post" enctype="multipart/form-data" class="form-stack">
+        <div class="form-field">
+          <label class="form-field__label" for="disease_1">Disease class A</label>
+          <p class="form-field__hint">Lower numeric disease ID becomes class A in the database.</p>
+          <input type="text" name="disease_1" id="disease_1" class="form-input"
+                 placeholder="e.g. oligodendroglioma" required
+                 value="{{ disease_1 or '' }}">
+        </div>
+
+        <div class="form-field">
+          <label class="form-field__label" for="disease_2">Disease class B</label>
+          <input type="text" name="disease_2" id="disease_2" class="form-input"
+                 placeholder="e.g. astrocytoma" required
+                 value="{{ disease_2 or '' }}">
+        </div>
+
+        <div class="form-field">
+          <label class="form-field__label" for="name_of_model">Model name</label>
+          <p class="form-field__hint">Used to identify this classifier (spaces become underscores).</p>
+          <input type="text" name="name_of_model" id="name_of_model" class="form-input"
+                 placeholder="e.g. lasso_lr_v1" required
+                 value="{{ name_of_model or '' }}">
+        </div>
+
+        <div class="form-field">
+          <label class="form-field__label" for="rdata_file">RData file</label>
+          <div class="file-upload" data-file-upload>
+            <input type="file" name="rdata_file" id="rdata_file" class="file-upload__input"
+                   accept=".RData,.rda,.rdata" required>
+            <label for="rdata_file" class="file-upload__label">
+              <span class="file-upload__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                </svg>
+              </span>
+              <span class="file-upload__text">Choose RData file</span>
+              <span class="file-upload__hint">.RData or .rda from glmnet / caret training</span>
+              <span class="file-upload__name" data-file-name data-default-text=""></span>
+            </label>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn--primary btn--block">Register model</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">How it works</h2>
+      <p class="card__subtitle">What happens when you submit</p>
+    </div>
+    <div class="card__body">
+      <ul class="info-list">
+        <li>The RData file is saved and processed by an <code>script.R</code> to extract gene coefficients and the intercept.</li>
+        <li>Disease names are normalized (lowercase, spaces → underscores) and inserted if they do not exist.</li>
+        <li>A new comparison record links the two classes under your chosen model name.</li>
+        <li>Once registered, the model appears on the Home page and can be used on the Test page.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

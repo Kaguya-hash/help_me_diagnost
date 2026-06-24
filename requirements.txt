@@ -1,0 +1,4 @@
+Flask==2.3.3
+gunicorn==21.0.0
+psycopg==3.3.7
+python-dotenv==1.0.0
