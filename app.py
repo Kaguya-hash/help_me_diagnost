@@ -40,7 +40,7 @@ def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
         result_r = subprocess.run(
             ["Rscript", "train_lr_lasso.R", disease_1, disease_2],
             cwd=curr_dir,
-            input=file_content,
+            input=file_content.read(),
             check=True,
             capture_output=True,
         )
@@ -326,7 +326,6 @@ def model_page():
             conn.rollback()
             return error_redirect("model_db_save_error")
 
-
         rdata_file = request.files.get("rdata_file")
 
         if not rdata_file or not rdata_file.filename:
@@ -335,7 +334,7 @@ def model_page():
         if not Path(rdata_file.filename).suffix.lower() in {".rdata", ".rda"}:
             return error_redirect("model_invalid_file")
 
-        file_content = rdata_file.read()
+        file_content = rdata_file
 
         thread = threading.Thread(
             target=run_heavy_r_task,
