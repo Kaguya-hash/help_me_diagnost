@@ -40,7 +40,7 @@ def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
         result_r = subprocess.run(
             ["Rscript", "train_lr_lasso.R", disease_1, disease_2],
             cwd=curr_dir,
-            input=file_content.read(),
+            input=file_content,
             check=True,
             capture_output=True,
         )
@@ -256,8 +256,9 @@ def test_page():
                     JOIN diseases d1
                         ON c.class_a = d1.disease_id
                     JOIN diseases d2
-                        ON c.class_b = d2.disease_id;
-                    """)
+                        ON c.class_b = d2.disease_id
+                    WHERE c.status = %(status)s
+                    """, {"status": "DONE"})
                 rows = cur.fetchall()
     except Exception:
         if request.method != "POST" or percentage_d1 is None:
@@ -334,7 +335,7 @@ def model_page():
         if not Path(rdata_file.filename).suffix.lower() in {".rdata", ".rda"}:
             return error_redirect("model_invalid_file")
 
-        file_content = rdata_file
+        file_content = rdata_file.read()
 
         thread = threading.Thread(
             target=run_heavy_r_task,
@@ -347,4 +348,4 @@ def model_page():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
