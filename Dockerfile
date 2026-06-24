@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN R -e "install.packages(c('glmnet', 'jsonlite'), repos='https://cran.r-project.org')"
+RUN R -e "install.packages(c('glmnet', 'jsonlite'), repos='https://packagemanager.posit.co/cran/__linux__/bookworm/2026-03-01')"
 
 WORKDIR /app
 COPY requirements.txt .

@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 
 from flask import Flask, render_template, request
 import csv
@@ -10,6 +11,7 @@ import subprocess
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
+from datetime import datetime
 
 from errors import error_redirect, get_error
 
@@ -19,8 +21,105 @@ curr_dir = Path(__file__).resolve().parent
 app = Flask(__name__)
 
 
-def _is_rdata_filename(filename):
-    return Path(filename).suffix.lower() in {".rdata", ".rda"}
+def delete_comparation(comparation_id):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM comparisons 
+                    WHERE comparison_id = %(comparation_id)s;
+                    """, {"comparation_id": comparation_id})
+                conn.commit()
+    except Exception:
+        pass
+    return
+
+
+def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
+    try:
+        result_r = subprocess.run(
+            ["Rscript", "train_lr_lasso.R", disease_1, disease_2],
+            cwd=curr_dir,
+            input=file_content,
+            check=True,
+            capture_output=True,
+        )
+    except Exception:
+        delete_comparation(comparison_id)
+        return
+
+    try:
+        genes_data = json.loads(result_r.stdout.decode("utf-8"))
+
+        symbols = []
+        values = []
+        intercept_value = None
+
+        for gene, weight in zip(genes_data["Gene"], genes_data["Weight"]):
+            if gene == "(Intercept)":
+                intercept_value = weight
+            else:
+                symbols.append(gene)
+                values.append(weight)
+
+        if intercept_value is None or not symbols:
+            raise ValueError("The R task returned an incomplete model result.")
+    except Exception:
+        delete_comparation(comparison_id)
+        return
+
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                        UPDATE comparisons SET intercept = %(intercept)s
+                        WHERE comparison_id = %(comparison_id)s
+                    """,
+                    {"intercept": intercept_value, "comparison_id": comparison_id},
+                )
+
+                cur.execute(
+                    """
+                        INSERT INTO genes (symbol)
+                        SELECT UNNEST(%(symbols)s::text[])
+                        ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+                        RETURNING gene_id, symbol
+                    """,
+                    {"symbols": symbols},
+                )
+
+                gene_to_value = dict(zip(symbols, values))
+
+                coefficient_rows = [
+                    {
+                        "comparison_id": comparison_id,
+                        "gene_id": row["gene_id"],
+                        "value": gene_to_value.get(row["symbol"]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                if coefficient_rows:
+                    cur.executemany(
+                        """
+                            INSERT INTO coefficients (comparison_id, gene_id, value)
+                            VALUES (%(comparison_id)s, %(gene_id)s, %(value)s)
+                        """,
+                        coefficient_rows,
+                    )
+
+                cur.execute("""
+                        UPDATE comparisons SET status = %(status)s
+                        WHERE comparison_id = %(comparison_id)s
+                        """, {"status": "DONE", "comparison_id": comparison_id})
+
+                conn.commit()
+    except Exception:
+        delete_comparation(comparison_id)
+        return
+    
+    return
 
 
 @app.route("/error")
@@ -46,8 +145,9 @@ def index():
                     JOIN diseases d1
                         ON c.class_a = d1.disease_id
                     JOIN diseases d2
-                        ON c.class_b = d2.disease_id;
-                    """)
+                        ON c.class_b = d2.disease_id
+                    WHERE c.status = %(status)s
+                    """, {"status": "DONE"})
                 rows = cur.fetchall()
     except Exception:
         return error_redirect("index_db_error")
@@ -185,79 +285,12 @@ def model_page():
 
         if disease_1 == disease_2 or disease_1 == "" or disease_2 == "" or name_of_model == "":
             return error_redirect("model_invalid_fields")
-
+        
         try:
             with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT disease_id FROM diseases
-                        WHERE name IN (%(disease_1)s, %(disease_2)s)
-                    """, {"disease_1": disease_1, "disease_2": disease_2})
-
-                    rows = cur.fetchall()
-
-                    if len(rows) == 2:
-                        id_1, id_2 = rows[0]["disease_id"], rows[1]["disease_id"]
-                        class_a, class_b = min(id_1, id_2), max(id_1, id_2)
-
-                        cur.execute("""
-                            SELECT comparison_id FROM comparisons
-                            WHERE class_a = %(class_a)s
-                            AND class_b = %(class_b)s
-                            AND model_name = %(model_name)s
-                        """, {"class_a": class_a, "class_b": class_b, "model_name": name_of_model})
-
-                        if cur.fetchone() is not None:
-                            return error_redirect("model_duplicate")
-        except Exception:
-            return error_redirect("model_db_error")
-
-        rdata_file = request.files.get("rdata_file")
-
-        if not rdata_file or not rdata_file.filename:
-            return error_redirect("model_no_file")
-
-        if not _is_rdata_filename(rdata_file.filename):
-            return error_redirect("model_invalid_file")
-
-        try:
-            result_r = subprocess.run(
-                ["Rscript", "train_lr_lasso.R", disease_1, disease_2],
-                cwd=curr_dir,
-                input=rdata_file.read(),
-                check=True,
-                capture_output=True,
-            )
-
-            genes_data = json.loads(result_r.stdout.decode("utf-8"))
-        except subprocess.CalledProcessError:
-            return error_redirect("model_rdata_error")
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return error_redirect("model_rdata_invalid")
-        except Exception:
-            return error_redirect("model_rdata_error")
-
-        symbols = []
-        values = []
-        intercept_value = None
-
-        try:
-            for gene, weight in zip(genes_data["Gene"], genes_data["Weight"]):
-                if gene == "(Intercept)":
-                    intercept_value = weight
-                else:
-                    symbols.append(gene)
-                    values.append(weight)
-        except (KeyError, TypeError):
-            return error_redirect("model_rdata_invalid")
-
-        if intercept_value is None or not symbols:
-            return error_redirect("model_rdata_invalid")
-
-        try:
-            with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         WITH
                             d AS (
                                 INSERT INTO diseases (name) VALUES (%(name_1)s), (%(name_2)s)
@@ -265,8 +298,8 @@ def model_page():
                                 RETURNING disease_id
                             ),
                             comp AS (
-                                INSERT INTO comparisons (class_a, class_b, model_name)
-                                SELECT a.disease_id, b.disease_id, %(model_name)s
+                                INSERT INTO comparisons (class_a, class_b, model_name, status, date)
+                                SELECT a.disease_id, b.disease_id, %(model_name)s, %(status)s, %(date)s
                                 FROM d a, d b
                                 WHERE a.disease_id < b.disease_id
                                 ON CONFLICT ON CONSTRAINT comparisons_unordered_unique
@@ -274,45 +307,42 @@ def model_page():
                                 RETURNING comparison_id
                             )
                         SELECT (SELECT comparison_id FROM comp) AS comparison_id
-                    """, {"name_1": disease_1, "name_2": disease_2, "model_name": name_of_model})
+                        """, 
+                        {
+                            "name_1": disease_1, 
+                            "name_2": disease_2, 
+                            "model_name": name_of_model, 
+                            "status": "NOT_DONE",
+                            "date": datetime.now().replace(microsecond=0)
+                        }
+                    )
 
                     result = cur.fetchone()
 
-                    if result["comparison_id"] is None:
+                    if result is None or result["comparison_id"] is None:
                         conn.rollback()
                         return error_redirect("model_duplicate")
-
-                    cur.execute("""
-                            UPDATE comparisons SET intercept = %(intercept)s
-                            WHERE comparison_id = %(comparison_id)s
-                            """,
-                            {"intercept": intercept_value, "comparison_id": result["comparison_id"]})
-
-                    cur.execute("""
-                        INSERT INTO genes (symbol)
-                        SELECT UNNEST(%(symbols)s::text[])
-                        ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
-                        RETURNING gene_id, symbol
-                        """, {"symbols": symbols})
-
-                    coefficient_rows = [
-                        {
-                            "comparison_id": result["comparison_id"],
-                            "gene_id": row["gene_id"],
-                            "value": values[symbols.index(row["symbol"])],
-                        }
-                        for row in cur.fetchall()
-                    ]
-
-                    cur.executemany("""
-                        INSERT INTO coefficients (comparison_id, gene_id, value)
-                        VALUES (%(comparison_id)s, %(gene_id)s, %(value)s)
-                        """, coefficient_rows)
-
-                    conn.commit()
-
         except Exception:
+            conn.rollback()
             return error_redirect("model_db_save_error")
+
+
+        rdata_file = request.files.get("rdata_file")
+
+        if not rdata_file or not rdata_file.filename:
+            return error_redirect("model_no_file")
+
+        if not Path(rdata_file.filename).suffix.lower() in {".rdata", ".rda"}:
+            return error_redirect("model_invalid_file")
+
+        file_content = rdata_file.read()
+
+        thread = threading.Thread(
+            target=run_heavy_r_task,
+            args=(result["comparison_id"], disease_1, disease_2, file_content),
+            daemon=True,
+        )
+        thread.start()
 
     return render_template("model.html")
 

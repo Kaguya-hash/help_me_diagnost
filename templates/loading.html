@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Processing model — Help Me Diagnost{% endblock %}
+
+{% block page_header %}
+{% set page_title = "Processing model" %}
+{% set page_description = "Your RData file is being processed in the background. This can take a few moments." %}
+{% include "partials/page_header.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card__body">
+    <p class="lead">Your model registration is being processed.</p>
+    <div class="status-card">
+      <p id="status-message">Waiting for the task to complete...</p>
+      <div class="status-spinner" aria-hidden="true"></div>
+    </div>
+    <div class="status-actions">
+      <a href="{{ url_for('model_page') }}" class="btn btn--secondary">Back to model form</a>
+      <a href="{{ url_for('index') }}" class="btn btn--primary">Go to home</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const taskId = "{{ task_id }}";
+  const statusMessage = document.getElementById("status-message");
+
+  async function pollStatus() {
+    try {
+      const response = await fetch(`{{ url_for('check_status', task_id='') }}${taskId}`);
+      const result = await response.json();
+
+      if (result.status === "processing") {
+        statusMessage.textContent = "Processing... please wait.";
+        setTimeout(pollStatus, 3000);
+      } else if (result.status === "completed") {
+        statusMessage.textContent = "Model registration completed successfully. You can return to the home page to verify it.";
+      } else if (result.status === "failed") {
+        statusMessage.textContent = `Task failed: ${result.error || 'Unknown error'}`;
+      } else {
+        statusMessage.textContent = "Task not found. It may have expired or the ID is invalid.";
+      }
+    } catch (error) {
+      statusMessage.textContent = "Unable to fetch task status. Please refresh the page.";
+    }
+  }
+
+  pollStatus();
+</script>
+{% endblock %}
