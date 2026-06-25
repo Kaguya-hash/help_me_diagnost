@@ -57,10 +57,38 @@ def clean_old_data():
                 
                 rows = cur.fetchall()
 
+                for row in rows:
+                    comparison_id = row["comparison_id"]
+                    status = row["status"]
+                    date = row["date"]
+
+                    if status == {"status": "DONE"}:
+                        file_path = uploads_dir / f"{comparison_id}_data.RData"
+                        if file_path.exists():
+                            file_path.unlink()
+                            files_snapshot.remove(file_path)
+                    elif status == {"status": "ERROR"}:
+                        file_path = uploads_dir / f"{comparison_id}_data.RData"
+                        if file_path.exists():
+                            file_path.unlink()
+                            files_snapshot.remove(file_path)
+                    elif status == {"status": "PENDING"} and date < (datetime.now() - timedelta(days=7)):
+                        file_path = uploads_dir / f"{comparison_id}_data.RData"
+                        if file_path.exists():
+                            file_path.unlink()
+                            files_snapshot.remove(file_path)
+
+                for file_path in files_snapshot:
+                    try:
+                        if file_path.exists():
+                            file_path.unlink()
+                    except Exception:
+                        pass
+
                 cur.execute("""
                     DELETE FROM comparisons
-                    WHERE status = %(status_param)s::jsonb OR status = %(status_param_2)s::jsonb
-                    """, {"status_param": status_param_done, "status_param_2": status_param_error})
+                    WHERE status = %(status_param_2)s::jsonb
+                    """, {"status_param_2": status_param_error})
                 
                 cur.execute("""
                     DELETE FROM comparisons
@@ -84,34 +112,6 @@ def clean_old_data():
                     """)
 
                 conn.commit()
-
-        for row in rows:
-            comparison_id = row["comparison_id"]
-            status = row["status"]
-            date = row["date"]
-
-            if status == {"status": "DONE"}:
-                file_path = uploads_dir / f"{comparison_id}_data.RData"
-                if file_path.exists():
-                    file_path.unlink()
-                    files_snapshot.remove(file_path)
-            elif status == {"status": "ERROR"}:
-                file_path = uploads_dir / f"{comparison_id}_data.RData"
-                if file_path.exists():
-                    file_path.unlink()
-                    files_snapshot.remove(file_path)
-            elif status == {"status": "PENDING"} and date < (datetime.now() - timedelta(days=7)):
-                file_path = uploads_dir / f"{comparison_id}_data.RData"
-                if file_path.exists():
-                    file_path.unlink()
-                    files_snapshot.remove(file_path)
-
-        for file_path in files_snapshot:
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-            except Exception:
-                pass
     except Exception:
         pass
 
