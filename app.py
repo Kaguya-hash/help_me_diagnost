@@ -2,7 +2,7 @@ import os
 import json
 import threading
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 import csv
 import io
 from pathlib import Path
@@ -11,7 +11,7 @@ import subprocess
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from errors import error_redirect, get_error
 
@@ -21,32 +21,156 @@ curr_dir = Path(__file__).resolve().parent
 app = Flask(__name__)
 
 
-def delete_comparation(comparation_id):
+last_date = None
+
+
+def clean_old_data():
+
+    list_files = []
+    uploads_dir = curr_dir / "uploads"
+
+    if uploads_dir.exists():
+        files_snapshot = list(uploads_dir.iterdir())
+    else:
+        files_snapshot = []
+    
+    for file_path in files_snapshot:
+        try:
+            if file_path.is_file() and file_path.name.endswith('_data.RData'):
+                id_str = file_path.name.replace('_data.RData', '')
+                if id_str.isdigit():
+                    list_files.append(int(id_str))    
+        except Exception:
+            pass
+
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                status_param_pending = json.dumps({"status": "PENDING"})
+                status_param_error = json.dumps({"status": "ERROR"})
+                status_param_done = json.dumps({"status": "DONE"})
+
+                cur.execute("""
+                    SELECT comparison_id, status, date FROM comparisons 
+                    WHERE comparison_id = ANY(%(list_files)s)
+                    """, {"list_files": list_files})
+                
+                rows = cur.fetchall()
+
+                cur.execute("""
+                    DELETE FROM comparisons
+                    WHERE status = %(status_param)s::jsonb OR status = %(status_param_2)s::jsonb
+                    """, {"status_param": status_param_done, "status_param_2": status_param_error})
+                
+                cur.execute("""
+                    DELETE FROM comparisons
+                    WHERE status = %(status_param)s::jsonb AND date < (NOW() - INTERVAL '7 days')
+                    """, {"status_param": status_param_pending})
+
+                cur.execute("""
+                    DELETE FROM diseases
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM comparisons
+                        WHERE class_a = diseases.disease_id OR class_b = diseases.disease_id
+                    )
+                    """)
+
+                cur.execute("""
+                    DELETE FROM genes
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM coefficients
+                        WHERE genes.gene_id = coefficients.gene_id
+                    )
+                    """)
+
+                conn.commit()
+
+        for row in rows:
+            comparison_id = row["comparison_id"]
+            status = row["status"]
+            date = row["date"]
+
+            if status == {"status": "DONE"}:
+                file_path = uploads_dir / f"{comparison_id}_data.RData"
+                if file_path.exists():
+                    file_path.unlink()
+                    files_snapshot.remove(file_path)
+            elif status == {"status": "ERROR"}:
+                file_path = uploads_dir / f"{comparison_id}_data.RData"
+                if file_path.exists():
+                    file_path.unlink()
+                    files_snapshot.remove(file_path)
+            elif status == {"status": "PENDING"} and date < (datetime.now() - timedelta(days=7)):
+                file_path = uploads_dir / f"{comparison_id}_data.RData"
+                if file_path.exists():
+                    file_path.unlink()
+                    files_snapshot.remove(file_path)
+
+        for file_path in files_snapshot:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def delete_diseases_if_unused(disease_id_1, disease_id_2):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM diseases
+                    WHERE disease_id = %(disease_id)s
+                    AND NOT EXISTS (
+                        SELECT 1 FROM comparisons
+                        WHERE class_a = %(disease_id)s OR class_b = %(disease_id)s
+                    )
+                """, {"disease_id": disease_id_1})
+                cur.execute("""
+                    DELETE FROM diseases
+                    WHERE disease_id = %(disease_id)s
+                    AND NOT EXISTS (
+                        SELECT 1 FROM comparisons
+                        WHERE class_a = %(disease_id)s OR class_b = %(disease_id)s
+                    )
+                """, {"disease_id": disease_id_2})
+    except Exception:
+        pass
+
+
+def write_status(comparison_id, status):
+    status_param = json.dumps({"status": status})
     try:
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    DELETE FROM comparisons 
-                    WHERE comparison_id = %(comparation_id)s;
-                    """, {"comparation_id": comparation_id})
+                    UPDATE comparisons SET status = %(status)s::jsonb
+                    WHERE comparison_id = %(comparison_id)s
+                """, {"status": status_param, "comparison_id": comparison_id})
+
                 conn.commit()
     except Exception:
         pass
-    return
 
 
-def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
+def run_heavy_r_task(comparison_id, disease_1, disease_2, to_be_saved, id_1, id_2):
     try:
         result_r = subprocess.run(
-            ["Rscript", "train_lr_lasso.R", disease_1, disease_2],
+            ["Rscript", "train_lr_lasso.R", disease_1, disease_2, to_be_saved],
             cwd=curr_dir,
-            input=file_content.read(),
             check=True,
             capture_output=True,
         )
-    except Exception:
-        delete_comparation(comparison_id)
+    except Exception as e:
+        delete_diseases_if_unused(id_1, id_2)
+        write_status(comparison_id, "ERROR")
         return
+    finally:
+        file_path = Path(to_be_saved)
+        if file_path.exists():
+            file_path.unlink()
 
     try:
         genes_data = json.loads(result_r.stdout.decode("utf-8"))
@@ -63,11 +187,13 @@ def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
                 values.append(weight)
 
         if intercept_value is None or not symbols:
-            raise ValueError("The R task returned an incomplete model result.")
+            write_status(comparison_id, "ERROR")
+            return
     except Exception:
-        delete_comparation(comparison_id)
+        delete_diseases_if_unused(id_1, id_2)
+        write_status(comparison_id, "ERROR")
         return
-
+    
     try:
         with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
             with conn.cursor() as cur:
@@ -109,16 +235,18 @@ def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
                         coefficient_rows,
                     )
 
+                status_param = json.dumps({"status": "DONE"})
                 cur.execute("""
-                        UPDATE comparisons SET status = %(status)s
-                        WHERE comparison_id = %(comparison_id)s
-                        """, {"status": "DONE", "comparison_id": comparison_id})
+                    UPDATE comparisons SET status = %(status)s::jsonb
+                    WHERE comparison_id = %(comparison_id)s
+                """, {"status": status_param, "comparison_id": comparison_id})
 
                 conn.commit()
     except Exception:
-        delete_comparation(comparison_id)
+        delete_diseases_if_unused(id_1, id_2)
+        write_status(comparison_id, "ERROR")
         return
-    
+
     return
 
 
@@ -126,16 +254,40 @@ def run_heavy_r_task(comparison_id, disease_1, disease_2, file_content):
 def error_page():
     code = request.args.get("code", "unknown")
     error = get_error(code)
-    return render_template("error.html", error=error, code=code)
+    return render_template("error.html", error=error)
 
 
 @app.route("/", methods=["GET"])
 def index():
+    global last_date
     rows = []
 
+    if last_date is None:
+
+        thread = threading.Thread(
+            target=clean_old_data,
+            args=(),
+            daemon=True,
+        )
+        thread.start()
+
+        last_date = datetime.now().date()
+
+    if last_date + timedelta(days=7) < datetime.now().date():
+
+        thread = threading.Thread(
+            target=clean_old_data,
+            args=(),
+            daemon=True,
+        )
+        thread.start()
+
+        last_date = datetime.now().date()
+    
     try:
         with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
             with conn.cursor() as cur:
+                status_param = json.dumps({"status": "DONE"})
                 cur.execute("""
                     SELECT
                         c.model_name,
@@ -146,8 +298,8 @@ def index():
                         ON c.class_a = d1.disease_id
                     JOIN diseases d2
                         ON c.class_b = d2.disease_id
-                    WHERE c.status = %(status)s
-                    """, {"status": "DONE"})
+                    WHERE c.status = %(status)s::jsonb
+                    """, {"status": status_param})
                 rows = cur.fetchall()
     except Exception:
         return error_redirect("index_db_error")
@@ -246,6 +398,7 @@ def test_page():
     try:
         with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
             with conn.cursor() as cur:
+                status_param = json.dumps({"status": "DONE"})
                 cur.execute("""
                     SELECT
                         c.comparison_id,
@@ -257,8 +410,8 @@ def test_page():
                         ON c.class_a = d1.disease_id
                     JOIN diseases d2
                         ON c.class_b = d2.disease_id
-                    WHERE c.status = %(status)s
-                    """, {"status": "DONE"})
+                    WHERE c.status = %(status)s::jsonb
+                    """, {"status": status_param})
                 rows = cur.fetchall()
     except Exception:
         if request.method != "POST" or percentage_d1 is None:
@@ -279,7 +432,9 @@ def test_page():
 
 @app.route("/model", methods=["GET", "POST"])
 def model_page():
+
     if request.method == "POST":
+
         disease_1 = request.form.get("disease_1", "").strip().lower().replace(" ", "_")
         disease_2 = request.form.get("disease_2", "").strip().lower().replace(" ", "_")
         name_of_model = request.form.get("name_of_model", "").strip().lower().replace(" ", "_")
@@ -287,22 +442,41 @@ def model_page():
         if disease_1 == disease_2 or disease_1 == "" or disease_2 == "" or name_of_model == "":
             return error_redirect("model_invalid_fields")
         
+        id_1 = None
+        id_2 = None
+        
         try:
             with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
+
+                    cur.execute("""
+                        INSERT INTO diseases (name) VALUES (%(name_1)s)
+                        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                        RETURNING disease_id
+                        """, {"name_1": disease_1}
+                    )
+
+                    conn.commit()
+
+                    id_1 = cur.fetchone()["disease_id"]
+
+                    cur.execute("""
+                        INSERT INTO diseases (name) VALUES (%(name_2)s)
+                        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                        RETURNING disease_id
+                        """, {"name_2": disease_2}
+                    )
+
+                    conn.commit()
+
+                    id_2 = cur.fetchone()["disease_id"]
+
+                    status_param = json.dumps({"status": "PENDING"})
+
+                    cur.execute("""
                         WITH
-                            d AS (
-                                INSERT INTO diseases (name) VALUES (%(name_1)s), (%(name_2)s)
-                                ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-                                RETURNING disease_id
-                            ),
                             comp AS (
-                                INSERT INTO comparisons (class_a, class_b, model_name, status, date)
-                                SELECT a.disease_id, b.disease_id, %(model_name)s, %(status)s, %(date)s
-                                FROM d a, d b
-                                WHERE a.disease_id < b.disease_id
+                                INSERT INTO comparisons (class_a, class_b, model_name, status, date) VALUES (%(id_1)s, %(id_2)s, %(model_name)s, %(status)s::jsonb, %(date)s)
                                 ON CONFLICT ON CONSTRAINT comparisons_unordered_unique
                                 DO NOTHING
                                 RETURNING comparison_id
@@ -310,40 +484,76 @@ def model_page():
                         SELECT (SELECT comparison_id FROM comp) AS comparison_id
                         """, 
                         {
-                            "name_1": disease_1, 
-                            "name_2": disease_2, 
+                            "id_1": id_1, 
+                            "id_2": id_2, 
                             "model_name": name_of_model, 
-                            "status": "NOT_DONE",
+                            "status": status_param,
                             "date": datetime.now().replace(microsecond=0)
                         }
                     )
 
                     result = cur.fetchone()
+                    print(id_1, id_2)
+                    print(result)
 
-                    if result is None or result["comparison_id"] is None:
-                        conn.rollback()
+                    if result is None:
+                        return error_redirect("model_db_save_error")
+                    if result["comparison_id"] is None:
                         return error_redirect("model_duplicate")
+                    
+                    conn.commit()
+                    
         except Exception:
-            conn.rollback()
+            delete_diseases_if_unused(id_1, id_2)
             return error_redirect("model_db_save_error")
 
         rdata_file = request.files.get("rdata_file")
 
         if not rdata_file or not rdata_file.filename:
+            delete_diseases_if_unused(id_1, id_2)
+            write_status(result["comparison_id"], "ERROR")
             return error_redirect("model_no_file")
 
         if not Path(rdata_file.filename).suffix.lower() in {".rdata", ".rda"}:
+            delete_diseases_if_unused(id_1, id_2)
+            write_status(result["comparison_id"], "ERROR")
             return error_redirect("model_invalid_file")
+
+        to_be_saved = curr_dir / "uploads" / f"{result['comparison_id']}_data.RData"
+        rdata_file.save(to_be_saved)
 
         thread = threading.Thread(
             target=run_heavy_r_task,
-            args=(result["comparison_id"], disease_1, disease_2, rdata_file),
+            args=(result["comparison_id"], disease_1, disease_2, to_be_saved, id_1, id_2),
             daemon=True,
         )
         thread.start()
 
+        return render_template("loading.html", task_id=result["comparison_id"])
+
     return render_template("model.html")
 
+
+@app.route("/status/<task_id>")
+def check_status(task_id):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT status
+                    FROM comparisons
+                    WHERE comparison_id = %(task_id)s
+                """, {"task_id": task_id})
+                result = cur.fetchone()
+
+                if result is None:
+                    return jsonify({"status": "NOT_FOUND"})
+
+                status = result["status"]
+    except Exception:
+        return jsonify({"status": "NOT_FOUND"})
+    
+    return jsonify(status)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)

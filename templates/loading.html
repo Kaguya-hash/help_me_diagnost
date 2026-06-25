@@ -34,18 +34,18 @@
       const response = await fetch(`{{ url_for('check_status', task_id='') }}${taskId}`);
       const result = await response.json();
 
-      if (result.status === "processing") {
+      if (result.status === "PENDING") {
         statusMessage.textContent = "Processing... please wait.";
         setTimeout(pollStatus, 3000);
-      } else if (result.status === "completed") {
+      } else if (result.status === "DONE") {
         statusMessage.textContent = "Model registration completed successfully. You can return to the home page to verify it.";
-      } else if (result.status === "failed") {
-        statusMessage.textContent = `Task failed: ${result.error || 'Unknown error'}`;
+      } else if (result.status === "ERROR") {
+        statusMessage.textContent = "Task failed.";
       } else {
         statusMessage.textContent = "Task not found. It may have expired or the ID is invalid.";
       }
     } catch (error) {
-      statusMessage.textContent = "Unable to fetch task status. Please refresh the page.";
+      statusMessage.textContent = "Unable to fetch task status.";
     }
   }
 

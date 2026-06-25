@@ -27,10 +27,6 @@
         <p class="error-panel__hint">{{ error.hint }}</p>
         {% endif %}
 
-        {% if code and code != 'unknown' %}
-        <p class="error-panel__code">Error code: <code>{{ code }}</code></p>
-        {% endif %}
-
         <div class="error-panel__actions">
           <a href="{{ url_for(error.back_endpoint) }}" class="btn btn--primary">
             {{ error.back_label }}
