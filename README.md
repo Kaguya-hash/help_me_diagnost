@@ -25,7 +25,7 @@ You can try the app online at **[https://help-me-diagnost.onrender.com/](https:/
 
 The **Test** page works well on the live deployment — browse registered models and run predictions on your own CSV samples.
 
-**Be careful with the Model page.** Registering a new model runs R in the background (`cv.glmnet` on full expression matrices), which is memory-intensive. On Render's free plan the instance has limited RAM, so large datasets or many genes can **exceed available memory** and cause training to fail; use the live site mainly for inference on models that are already registered.
+> ⚠️ **Be careful with the Model page.** Registering a new model runs R in the background (`cv.glmnet` on full expression matrices), which is memory-intensive. On Render's free plan the instance has limited RAM, so large datasets or many genes can **exceed available memory** and cause training to fail; use the live site mainly for inference on models that are already registered.
 
 ---
 
