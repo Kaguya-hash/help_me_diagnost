@@ -12,6 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+import psutil
 
 from errors import error_redirect, get_error
 
@@ -520,6 +521,7 @@ def model_page():
             return error_redirect("model_invalid_file")
 
         to_be_saved = curr_dir / "uploads" / f"{result['comparison_id']}_data.RData"
+        to_be_saved.parent.mkdir(parents=True, exist_ok=True)
         rdata_file.save(to_be_saved)
 
         thread = threading.Thread(
