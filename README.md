@@ -2,7 +2,7 @@
 
 A web application for **binary disease classification from gene expression data**. Upload training data, fit a sparse logistic regression model with LASSO, and run predictions on new patient samples — all through a simple browser interface.
 
-Built during **[Iberian Modeling Week 2026](https://www.math-in.net/iberian/)** (Lisbon), originally for **Problem 3: Predicting brain tumor subtypes from gene expression data** (coordinator: Dr. Marta Lopes, NOVA School of Science and Technology). The challenge focused on distinguishing lower-grade gliomas — **oligodendroglioma** vs **astrocytoma** — using RNA-sequencing data from TCGA. This project generalizes that setup so you can train and deploy classifiers for **any pair of disease subtypes or conditions**.
+Built during **[Iberian Modeling Week 2026](https://eventos.fct.unl.pt/12thimw/)** (Lisbon), originally for **Problem 3: Predicting brain tumor subtypes from gene expression data** (coordinator: Dr. Marta Lopes, NOVA School of Science and Technology). The challenge focused on distinguishing lower-grade gliomas — **oligodendroglioma** vs **astrocytoma** — using RNA-sequencing data from TCGA. This project generalizes that setup so you can train and deploy classifiers for **any pair of disease subtypes or conditions**.
 
 ---
 
